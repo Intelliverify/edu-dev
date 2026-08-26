@@ -1,10 +1,10 @@
 name: URID lifecycle events
 
-# On every push, scan the pushed commit messages for URID references
-# (e.g. URID_EDU_2026_0042) and log a COMMIT event against each one in
-# AdminPlatform, so the founder Trace page updates automatically.
+# On every push, scan the pushed commit messages (from the event payload) for
+# URID references (e.g. URID_EDU_2026_0042) and log a COMMIT event against each
+# in AdminPlatform, so the founder Trace page updates automatically.
 #
-# Requires a repo secret: ADMINPLATFORM_AGENT_TOKEN (an EDU-scoped agent token).
+# Requires repo secret ADMINPLATFORM_AGENT_TOKEN (EDU-scoped agent token).
 # If the secret is absent, the job skips quietly (never fails your push).
 
 on:
@@ -18,17 +18,11 @@ jobs:
   log-urid-events:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history for the push range)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Log COMMIT events for referenced URIDs
         env:
           API: https://adminplatform-production-4306.up.railway.app
           TOKEN: ${{ secrets.ADMINPLATFORM_AGENT_TOKEN }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.event.after }}
+          COMMITS: ${{ toJSON(github.event.commits) }}
           REPO: ${{ github.repository }}
           REF: ${{ github.ref_name }}
         run: |
@@ -37,16 +31,15 @@ jobs:
             echo "ADMINPLATFORM_AGENT_TOKEN not set — skipping URID event logging."
             exit 0
           fi
-          # New branch (all-zero BEFORE) -> just the head commit; else the push range.
-          if echo "$BEFORE" | grep -qE '^0+$'; then RANGE="-1 $AFTER"; else RANGE="$BEFORE..$AFTER"; fi
-
           found=0
-          # tab-separated: <sha>\t<subject>
-          while IFS=$'\t' read -r SHA SUBJECT; do
-            [ -z "$SHA" ] && continue
-            URIDS=$(printf '%s' "$SUBJECT" | grep -oE 'URID_[A-Z]{2,6}_[0-9]{4}_[0-9]{4}(\.[0-9]+)?' | sort -u || true)
+          while read -r commit; do
+            [ -z "$commit" ] && continue
+            SHA=$(printf '%s' "$commit" | jq -r '.id')
+            MSG=$(printf '%s' "$commit" | jq -r '.message')
+            URIDS=$(printf '%s' "$MSG" | grep -oE 'URID_[A-Z]{2,6}_[0-9]{4}_[0-9]{4}(\.[0-9]+)?' | sort -u || true)
             for U in $URIDS; do
               found=1
+              SUBJECT=$(printf '%s' "$MSG" | head -n1)
               payload=$(jq -n --arg s "$SUBJECT" --arg sha "$SHA" --arg repo "$REPO" --arg ref "$REF" \
                 '{event_type:"COMMIT", description:$s, metadata:{sha:$sha, repo:$repo, ref:$ref}}')
               echo "→ $U  ($SHA)"
@@ -56,7 +49,6 @@ jobs:
                 -H "Content-Type: application/json" \
                 -d "$payload" || echo "   (request failed — non-blocking)"
             done
-          done < <(git log $RANGE --no-merges --pretty=format:'%H%x09%s')
-
+          done < <(printf '%s' "$COMMITS" | jq -c '.[]?')
           [ "$found" = "0" ] && echo "No URID references found in pushed commits."
           exit 0
