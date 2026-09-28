@@ -13,6 +13,8 @@ import PTMScheduler from "@/components/PTMScheduler";
 import StaffTrainingChat from "@/components/StaffTrainingChat";
 import CommunityTab from "@/components/CommunityTab";
 import ReelComposer from "@/components/ReelComposer";
+import LinkifyText from "@/components/LinkifyText";
+import { uploadHomeworkFile } from "@/lib/uploadHomeworkFile";
 
 type TeacherTab = "attendance" | "homework" | "students" | "photos" | "reels" | "kit" | "messages" | "transport" | "incidents" | "birthdays" | "ptm" | "training" | "community";
 
@@ -326,13 +328,8 @@ export default function TeacherDashboardPage() {
   // Upload a teacher attachment (image / pdf / video) for the new homework
   const uploadHWFile = async (file: File) => {
     setHWUploading(true);
-    try {
-      const fd = new FormData(); fd.append("file", file);
-      const res = await fetch("/api/teacher/homework/upload", { method: "POST", body: fd });
-      const j = await res.json();
-      if (j.url) setHWFiles(f => [...f, { url: j.url, name: j.name, type: j.type }]);
-      else alert(j.error || "Upload failed");
-    } catch { alert("Upload failed"); }
+    const uploaded = await uploadHomeworkFile(file);
+    if (uploaded) setHWFiles(f => [...f, uploaded]);
     setHWUploading(false);
   };
 
@@ -766,7 +763,7 @@ export default function TeacherDashboardPage() {
                       <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
                         <div style={{ width:"42px", height:"42px", borderRadius:"12px", background:isPast?"rgba(232,105,74,0.1)":"rgba(99,102,241,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"20px", flexShrink:0 }}>📝</div>
                         <div style={{ flex:1 }}>
-                          <div style={{ fontWeight:700, fontSize:"14px", color:"#1A2F4A" }}>{hw.title}</div>
+                          <div style={{ fontWeight:700, fontSize:"14px", color:"#1A2F4A" }}><LinkifyText text={hw.title} /></div>
                           <div style={{ fontSize:"11px", color:"#6B7A99" }}>
                             {hw.subject && <span style={{ marginRight:"8px" }}>📖 {hw.subject}</span>}
                             {hw.due_date
@@ -774,7 +771,7 @@ export default function TeacherDashboardPage() {
                               : <span>No due date</span>}
                             {isPast && <span style={{ marginLeft:"6px", background:"rgba(232,105,74,0.1)", color:"#E8694A", borderRadius:"20px", padding:"1px 7px", fontSize:"9px", fontWeight:700 }}>PAST DUE</span>}
                           </div>
-                          {hw.description && <div style={{ fontSize:"11px", color:"#6B7A99", marginTop:"2px" }}>{hw.description}</div>}
+                          {hw.description && <div style={{ fontSize:"11px", color:"#6B7A99", marginTop:"2px" }}><LinkifyText text={hw.description} /></div>}
                         </div>
                         <button onClick={() => deleteHW(hw.id)} style={{ background:"rgba(220,38,38,0.08)", border:"none", borderRadius:"8px", padding:"7px", cursor:"pointer", color:"#DC2626" }}>
                           <Trash2 style={{ width:"14px", height:"14px" }} />

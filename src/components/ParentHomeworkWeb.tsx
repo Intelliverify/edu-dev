@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import LinkifyText from "@/components/LinkifyText";
+import { uploadHomeworkFile } from "@/lib/uploadHomeworkFile";
 
 async function uploadFile(file: File): Promise<string | null> {
-  const fd = new FormData(); fd.append("file", file);
-  const r = await fetch("/api/teacher/homework/upload", { method: "POST", body: fd });
-  const j = await r.json();
-  return j.url || null;
+  const uploaded = await uploadHomeworkFile(file);
+  return uploaded?.url || null;
 }
 
 function FileLink({ url, label }: { url: string; label: string }) {
@@ -62,9 +62,9 @@ function Card({ hw, st, enquiryId, childName, onChanged }: { hw: any; st: any | 
     <div style={{ border: `1px solid ${done ? "rgba(23,143,120,0.3)" : "#EDE8DF"}`, borderRadius: 14, padding: 14, marginBottom: 10, background: done ? "rgba(23,143,120,0.04)" : "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: done ? "#6B7A99" : "#1A2F4A" }}>{hw.title}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: done ? "#6B7A99" : "#1A2F4A" }}><LinkifyText text={hw.title} /></div>
           {hw.subject && <div style={{ fontSize: 10, color: "#6366F1", fontWeight: 700, marginTop: 2 }}>📖 {hw.subject}</div>}
-          {hw.description && <div style={{ fontSize: 11, color: "#6B7A99", marginTop: 4 }}>{hw.description}</div>}
+          {hw.description && <div style={{ fontSize: 11, color: "#6B7A99", marginTop: 4 }}><LinkifyText text={hw.description} /></div>}
           <div style={{ fontSize: 11, color: done ? "#178F78" : "#6B7A99", fontWeight: 700, marginTop: 4 }}>
             {done ? "✅ Completed" : (hw.due_date ? `Due: ${new Date(hw.due_date).toLocaleDateString("en-IN")}` : "No due date")}
           </div>
