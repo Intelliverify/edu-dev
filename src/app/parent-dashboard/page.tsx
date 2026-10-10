@@ -17,6 +17,7 @@ import AudioPlayer from "@/components/AudioPlayer";
 import CommunityTab from "@/components/CommunityTab";
 import ReelComposer from "@/components/ReelComposer";
 import ParentHomeworkWeb from "@/components/ParentHomeworkWeb";
+import ChangePasswordModal from "@/components/ChangePasswordModal";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 // ── Razorpay global type ─────────────────────────────────
@@ -289,6 +290,32 @@ export default function ParentDashboardPage() {
   useEffect(() => { getSb().then(setSbClient); }, []);
   const [profileUploading, setProfileUploading] = useState(false);
   const [profileError, setProfileError]         = useState("");
+  const [pwModalOpen, setPwModalOpen]           = useState(false);
+  const [showPwReminder, setShowPwReminder]     = useState(false);
+
+  // Show a dismissible "set your own password" reminder while on the default
+  // password; if dismissed, don't nag again for ~30 days.
+  useEffect(() => {
+    if (!session) return;
+    if (!session.isDefaultPassword) { setShowPwReminder(false); return; }
+    let until = 0;
+    try { until = Number(localStorage.getItem("ep_pw_snooze_until") || 0); } catch {}
+    setShowPwReminder(Date.now() > until);
+  }, [session]);
+
+  const snoozePwReminder = () => {
+    try { localStorage.setItem("ep_pw_snooze_until", String(Date.now() + 30*24*60*60*1000)); } catch {}
+    setShowPwReminder(false);
+  };
+
+  const onPwChanged = () => {
+    setShowPwReminder(false);
+    try {
+      const stored = localStorage.getItem("ep_parent_session");
+      if (stored) { const s = JSON.parse(stored); s.isDefaultPassword = false; localStorage.setItem("ep_parent_session", JSON.stringify(s)); }
+    } catch {}
+    setSession((p: any) => (p ? { ...p, isDefaultPassword: false } : p));
+  };
 
   const now       = new Date();
   const monthKey  = String(now.getMonth()+1).padStart(2,"0");
@@ -532,6 +559,21 @@ ${f.reference_number ? `<p class="label">Reference</p><p style="font-family:mono
       </div>
 
       <div style={{ maxWidth:"900px", margin:"0 auto", padding:"16px" }}>
+
+        {/* Default-password reminder (monthly, dismissible) */}
+        {showPwReminder && (
+          <div style={{ background:"rgba(245,184,41,0.12)", border:"1px solid rgba(245,184,41,0.4)", borderRadius:"16px", padding:"14px 16px", marginBottom:"16px", display:"flex", gap:"12px", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ fontSize:"22px" }}>🔐</div>
+            <div style={{ flex:1, minWidth:"180px" }}>
+              <div style={{ fontWeight:700, fontSize:"13px", color:"#1A2F4A" }}>You&apos;re still using your default password</div>
+              <div style={{ fontSize:"12px", color:"#6B7A99", marginTop:"2px" }}>Set your own password to keep your account secure.</div>
+            </div>
+            <div style={{ display:"flex", gap:"8px" }}>
+              <button onClick={() => setPwModalOpen(true)} style={{ padding:"8px 14px", borderRadius:"14px", background:"#178F78", color:"white", border:"none", fontWeight:700, fontSize:"12px", cursor:"pointer" }}>Set password</button>
+              <button onClick={snoozePwReminder} style={{ padding:"8px 14px", borderRadius:"14px", background:"transparent", color:"#6B7A99", border:"1px solid #EDE8DF", fontWeight:600, fontSize:"12px", cursor:"pointer" }}>Remind me later</button>
+            </div>
+          </div>
+        )}
 
         {/* Child selector */}
         {children.length > 0 && (
@@ -1128,7 +1170,10 @@ ${f.reference_number ? `<p class="label">Reference</p><p style="font-family:mono
                     </div>
                   ))}
                 </div>
-                <button onClick={logout} style={{ width:"100%", marginTop:"20px", padding:"11px", borderRadius:"20px", background:"rgba(220,38,38,0.08)", border:"1px solid rgba(220,38,38,0.2)", color:"#DC2626", fontWeight:700, fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
+                <button onClick={() => setPwModalOpen(true)} style={{ width:"100%", marginTop:"20px", padding:"11px", borderRadius:"20px", background:"rgba(23,143,120,0.08)", border:"1px solid rgba(23,143,120,0.25)", color:"#178F78", fontWeight:700, fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
+                  🔐 Change Password
+                </button>
+                <button onClick={logout} style={{ width:"100%", marginTop:"10px", padding:"11px", borderRadius:"20px", background:"rgba(220,38,38,0.08)", border:"1px solid rgba(220,38,38,0.2)", color:"#DC2626", fontWeight:700, fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"8px" }}>
                   <LogOut style={{ width:"16px", height:"16px" }} /> Logout
                 </button>
               </div>
@@ -1136,6 +1181,14 @@ ${f.reference_number ? `<p class="label">Reference</p><p style="font-family:mono
           </>
         )}
       </div>
+
+      <ChangePasswordModal
+        open={pwModalOpen}
+        phone={session?.phone}
+        onClose={() => setPwModalOpen(false)}
+        onSuccess={onPwChanged}
+      />
+
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes ai-pulse {

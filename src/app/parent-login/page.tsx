@@ -39,6 +39,8 @@ export default function ParentLoginPage() {
         localStorage.removeItem("ep_teacher_session");
         localStorage.setItem("ep_parent_session", JSON.stringify({
           phone, childName: data.childName || "", loginTime: Date.now(), firstLogin: data.firstLogin || false,
+          // On the default password after first-login, or whatever the login API reports.
+          isDefaultPassword: data.isDefaultPassword ?? data.firstLogin ?? false,
         }));
         setStep("success");
         if (data.waUrl) setTimeout(() => window.open(data.waUrl, "_blank"), 500);

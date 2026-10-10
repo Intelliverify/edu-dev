@@ -5,6 +5,7 @@ import { rateLimit, getClientIp } from "@/lib/rateLimit";
 import { signParentSession, PARENT_COOKIE_NAME, PARENT_MAX_AGE } from "@/lib/parentSession";
 import { getSchoolConfig } from "@/lib/getSchoolConfig";
 import { sendWhatsApp } from "@/lib/twilio";
+import { computeDefaultPassword } from "@/lib/defaultPassword";
 
 function sb() {
   return createClient(
@@ -95,16 +96,15 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Last 4 digits do not match." }, { status: 401 });
       }
 
-      // Generate and HASH the initial password before storing
-      const initial  = (account.child_name || "E").charAt(0).toUpperCase();
-      const year     = String(dob).split("-")[0];
-      const autoPass = `${initial}${year}${last4}`;
+      // Generate and HASH the initial (default) password before storing
+      const autoPass = computeDefaultPassword(account.child_name, dob, phoneClean);
       const hash     = await bcrypt.hash(autoPass, 10);
 
       await client.from("parent_accounts").update({
-        password_hash:  hash,
-        is_first_login: false,
-        last_login:     new Date().toISOString(),
+        password_hash:       hash,
+        is_first_login:      false,
+        is_default_password: true, // parent starts on the default password
+        last_login:          new Date().toISOString(),
       }).eq("phone", phoneClean);
 
       // Send credentials via Twilio WhatsApp — not in the JSON body
@@ -173,11 +173,12 @@ export async function POST(req: Request) {
       });
 
       const res = NextResponse.json({
-        success:   true,
-        phone:     phoneClean,
-        childName: account.child_name,
-        studentId: account.student_id,
-        enquiryId: account.enquiry_id,
+        success:           true,
+        phone:             phoneClean,
+        childName:         account.child_name,
+        studentId:         account.student_id,
+        enquiryId:         account.enquiry_id,
+        isDefaultPassword: account.is_default_password !== false, // true unless explicitly cleared
       });
       res.cookies.set(PARENT_COOKIE_NAME, token, {
         httpOnly: true, secure: process.env.NODE_ENV === "production",

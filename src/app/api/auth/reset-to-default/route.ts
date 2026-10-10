@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { rateLimit, getClientIp } from "@/lib/rateLimit";
 import { sendWhatsApp } from "@/lib/twilio";
 import { getSchoolConfig } from "@/lib/getSchoolConfig";
+import { computeDefaultPassword, DEFAULT_PASSWORD_FORMAT_MESSAGE } from "@/lib/defaultPassword";
 
 function sb() {
   return createClient(
@@ -48,23 +49,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Last 4 digits do not match." }, { status: 401 });
     }
 
-    // Regenerate default password
-    const initial     = (account.child_name || "E").charAt(0).toUpperCase();
-    const year        = String(dob).split("-")[0];
-    const defaultPass = `${initial}${year}${last4}`;
+    // Regenerate default password and mark the account as back on the default.
+    const defaultPass = computeDefaultPassword(account.child_name, dob, phoneClean);
     const hash        = await bcrypt.hash(defaultPass, 10);
 
     await client.from("parent_accounts")
-      .update({ password_hash: hash, is_first_login: false })
+      .update({ password_hash: hash, is_first_login: false, is_default_password: true })
       .eq("phone", phoneClean);
 
-    // Try to send via WhatsApp (sandbox/production)
+    // Deliver the actual password via WhatsApp only — never in the HTTP response.
     const school  = await getSchoolConfig();
     const message = `🌿 *${school.name} — Password Reset*\n\nDear Parent,\n\nYour password has been reset to default:\n\n🔑 Password: *${defaultPass}*\n\n🌐 Login: ${school.domain}/parent-login\n\n⚠️ Please change your password after login.\n\n_${school.name}_`;
     const sent    = await sendWhatsApp(phoneClean, message);
     const waUrl   = sent ? null : `https://wa.me/91${phoneClean}?text=${encodeURIComponent(message)}`;
 
-    return NextResponse.json({ success: true, sent, waUrl, defaultPass });
+    // Response describes the FORMAT only (no plaintext password).
+    return NextResponse.json({ success: true, sent, waUrl, message: DEFAULT_PASSWORD_FORMAT_MESSAGE });
 
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
