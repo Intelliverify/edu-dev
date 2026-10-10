@@ -48,12 +48,5 @@ next-env.d.ts
 edu-dev.log
 *.log
 
-# Local-only operational tooling (handles Management/Vercel tokens) — never publish
-scripts/iva-admin.mjs
-scripts/nonprod-setup.mjs
+# Obsolete local runner (superseded; references a stale DB password) — keep local
 scripts/run-005.mjs
-scripts/schema-apply.mjs
-scripts/schema-gen.mjs
-scripts/schema-scope.mjs
-scripts/vercel-provision.mjs
-supabase/_schema_dump.sql
