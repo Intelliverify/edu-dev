@@ -35,6 +35,34 @@ export async function POST(req: Request) {
   }
 }
 
+export async function PUT(req: Request) {
+  try {
+    const body = await req.json();
+    const { id, title, description, dueDate, subject, attachments, audioKeywords } = body;
+    if (!id || !title) return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+
+    const row: any = {
+      title,
+      description: description || null,
+      due_date: dueDate || null,
+      subject,
+      attachments: Array.isArray(attachments) ? attachments : [],
+    };
+    if (audioKeywords !== undefined) row.audio_keywords = audioKeywords || null;
+
+    // resilient update: drop newer columns if this DB doesn't have them
+    let { data, error } = await sb().from("homework").update(row).eq("id", id).select().single();
+    if (error && /audio_keywords|attachments/i.test(error.message)) {
+      delete row.audio_keywords; delete row.attachments;
+      ({ data, error } = await sb().from("homework").update(row).eq("id", id).select().single());
+    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, data });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: Request) {
   const { id } = await req.json();
   const { error } = await sb().from("homework").delete().eq("id", id);

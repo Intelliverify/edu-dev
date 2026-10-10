@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
-import { LogOut, Plus, Trash2, MessageSquare, Send, Clock } from "lucide-react";
+import { LogOut, Plus, Trash2, MessageSquare, Send, Clock, Pencil } from "lucide-react";
 import PhotoUploader from "@/components/PhotoUploader";
 import FaceAutoTagger from "@/components/FaceAutoTagger";
 import TeacherKitTab from "@/components/TeacherKitTab";
@@ -13,7 +13,8 @@ import PTMScheduler from "@/components/PTMScheduler";
 import StaffTrainingChat from "@/components/StaffTrainingChat";
 import CommunityTab from "@/components/CommunityTab";
 import ReelComposer from "@/components/ReelComposer";
-import LinkifyText from "@/components/LinkifyText";
+import RichText from "@/components/RichText";
+import { getSubjectTheme } from "@/lib/subjectTheme";
 import { uploadHomeworkFile } from "@/lib/uploadHomeworkFile";
 
 type TeacherTab = "attendance" | "homework" | "students" | "photos" | "reels" | "kit" | "messages" | "transport" | "incidents" | "birthdays" | "ptm" | "training" | "community";
@@ -64,6 +65,8 @@ export default function TeacherDashboardPage() {
   const [hwReply, setHWReply] = useState<Record<string, string>>({});      // status row id → reply draft
   const [hwExpanded, setHWExpanded] = useState<string | null>(null);
   const [hwSaving, setHWSaving]   = useState(false);
+  const [hwEditId, setHWEditId]   = useState<string | null>(null);   // homework id being edited (null = creating)
+  const hwDescRef = useRef<HTMLTextAreaElement>(null);               // for the rich-text toolbar
 
   // Attendance history state
   const [showAttHistory, setShowAttHistory] = useState(false);
@@ -300,29 +303,75 @@ export default function TeacherDashboardPage() {
     setTimeout(() => setAttSaved(false), 3000);
   };
 
-  // ── Assign homework ───────────────────────────────────
+  // ── Assign / edit homework ────────────────────────────
+  const resetHWForm = () => {
+    setHWForm({ title:"", subject:"", description:"", dueDate:"", keywords:"" });
+    setHWFiles([]);
+    setHWEditId(null);
+  };
+
   const assignHW = async () => {
     if (!hwForm.title) return;
     setHWSaving(true);
-    await fetch("/api/teacher/homework", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sectionId:   currentSectionId,
-        sectionName: currentSectionName,
-        title:       hwForm.title,
-        subject:     hwForm.subject,
-        description: hwForm.description,
-        dueDate:     hwForm.dueDate || null,
-        assignedBy:  session.name,
-        attachments: hwFiles,
-        audioKeywords: hwForm.keywords || null,
-      }),
-    });
-    setHWForm({ title:"", subject:"", description:"", dueDate:"", keywords:"" });
-    setHWFiles([]);
+    if (hwEditId) {
+      await fetch("/api/teacher/homework", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id:          hwEditId,
+          title:       hwForm.title,
+          subject:     hwForm.subject,
+          description: hwForm.description,
+          dueDate:     hwForm.dueDate || null,
+          attachments: hwFiles,
+          audioKeywords: hwForm.keywords || null,
+        }),
+      });
+    } else {
+      await fetch("/api/teacher/homework", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sectionId:   currentSectionId,
+          sectionName: currentSectionName,
+          title:       hwForm.title,
+          subject:     hwForm.subject,
+          description: hwForm.description,
+          dueDate:     hwForm.dueDate || null,
+          assignedBy:  session.name,
+          attachments: hwFiles,
+          audioKeywords: hwForm.keywords || null,
+        }),
+      });
+    }
+    resetHWForm();
     setShowHWForm(false);
     setHWSaving(false);
     loadData(currentSectionId);
+  };
+
+  // Open the form pre-filled to edit an existing homework
+  const startEditHW = (hw: any) => {
+    setHWEditId(hw.id);
+    setHWForm({
+      title:       hw.title || "",
+      subject:     hw.subject || "",
+      description: hw.description || "",
+      dueDate:     (hw.due_date || "").slice(0, 10),
+      keywords:    hw.audio_keywords || "",
+    });
+    setHWFiles(Array.isArray(hw.attachments) ? hw.attachments : []);
+    setShowHWForm(true);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Rich-text toolbar: wrap the current description selection with markers
+  const wrapHWDesc = (left: string, right: string = left) => {
+    const ta = hwDescRef.current; if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const val = hwForm.description;
+    const sel = val.slice(s, e) || "text";
+    const next = val.slice(0, s) + left + sel + right + val.slice(e);
+    setHWForm(p => ({ ...p, description: next }));
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(s + left.length, s + left.length + sel.length); }, 0);
   };
 
   // Upload a teacher attachment (image / pdf / video) for the new homework
@@ -682,7 +731,7 @@ export default function TeacherDashboardPage() {
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:"17px", fontWeight:700, color:"#1A2F4A" }}>Homework — {currentSectionName}</div>
-              <button onClick={() => setShowHWForm(!showHWForm)}
+              <button onClick={() => { if (showHWForm) { setShowHWForm(false); resetHWForm(); } else { resetHWForm(); setShowHWForm(true); } }}
                 style={{ display:"flex", alignItems:"center", gap:"6px", background:"#178F78", color:"white", border:"none", borderRadius:"12px", padding:"7px 16px", fontSize:"12px", fontWeight:700, cursor:"pointer" }}>
                 <Plus style={{ width:"13px", height:"13px" }} /> Assign Homework
               </button>
@@ -691,7 +740,7 @@ export default function TeacherDashboardPage() {
             {/* Homework form */}
             {showHWForm && (
               <div style={{ background:"white", borderRadius:"16px", border:"2px solid #178F78", padding:"18px", marginBottom:"14px" }}>
-                <div style={{ fontWeight:700, fontSize:"14px", color:"#178F78", marginBottom:"14px" }}>New Homework</div>
+                <div style={{ fontWeight:700, fontSize:"14px", color:"#178F78", marginBottom:"14px" }}>{hwEditId ? "✏️ Edit Homework" : "New Homework"}</div>
                 <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:"10px", marginBottom:"10px" }}>
                   <div>
                     <label style={{ fontSize:"10px", fontWeight:700, color:"#6B7A99", display:"block", marginBottom:"4px" }}>TITLE *</label>
@@ -708,7 +757,18 @@ export default function TeacherDashboardPage() {
                 </div>
                 <div style={{ marginBottom:"12px" }}>
                   <label style={{ fontSize:"10px", fontWeight:700, color:"#6B7A99", display:"block", marginBottom:"4px" }}>DESCRIPTION (optional)</label>
-                  <input value={hwForm.description} onChange={e => setHWForm(p=>({...p,description:e.target.value}))} style={inp} placeholder="Add details or instructions…" />
+                  <div style={{ display:"flex", gap:"6px", marginBottom:"6px" }}>
+                    <button type="button" onClick={() => wrapHWDesc("**")} title="Bold"
+                      style={{ fontWeight:800, fontSize:"13px", width:"30px", height:"28px", borderRadius:"8px", border:"1px solid #EDE8DF", background:"#FAF0E8", cursor:"pointer", color:"#1A2F4A" }}>B</button>
+                    <button type="button" onClick={() => wrapHWDesc("*")} title="Italic"
+                      style={{ fontStyle:"italic", fontSize:"13px", width:"30px", height:"28px", borderRadius:"8px", border:"1px solid #EDE8DF", background:"#FAF0E8", cursor:"pointer", color:"#1A2F4A" }}>i</button>
+                    <button type="button" onClick={() => wrapHWDesc("==")} title="Highlight"
+                      style={{ fontSize:"13px", height:"28px", padding:"0 8px", borderRadius:"8px", border:"1px solid #EDE8DF", background:"#FEF9C3", cursor:"pointer", color:"#1A2F4A" }}>Highlight</button>
+                  </div>
+                  <textarea ref={hwDescRef} value={hwForm.description} onChange={e => setHWForm(p=>({...p,description:e.target.value}))}
+                    style={{ ...inp, minHeight:"80px", resize:"vertical", lineHeight:1.5 }}
+                    placeholder={"Add details or instructions…\nUse the buttons above or type **bold**, *italic*, ==highlight==. Press Enter for a new line."} />
+                  <div style={{ fontSize:"10px", color:"#6B7A99", marginTop:"4px" }}>Tip: select text then tap <b>B</b> / <i>i</i> / Highlight. New lines are kept.</div>
                 </div>
                 <div style={{ marginBottom:"12px" }}>
                   <label style={{ fontSize:"10px", fontWeight:700, color:"#6B7A99", display:"block", marginBottom:"4px" }}>KEEP IN ENGLISH — e.g. 1 to 10, A B C (optional)</label>
@@ -733,10 +793,10 @@ export default function TeacherDashboardPage() {
                 </div>
                 <div style={{ display:"flex", gap:"8px" }}>
                   <button onClick={assignHW} disabled={hwSaving||!hwForm.title}
-                    style={{ background:"#178F78", color:"white", border:"none", borderRadius:"10px", padding:"8px 18px", fontSize:"12px", fontWeight:700, cursor:"pointer" }}>
-                    {hwSaving ? "Saving…" : "Assign to Class"}
+                    style={{ background:"#178F78", color:"white", border:"none", borderRadius:"10px", padding:"8px 18px", fontSize:"12px", fontWeight:700, cursor:"pointer", opacity: hwSaving||!hwForm.title ? 0.6 : 1 }}>
+                    {hwSaving ? "Saving…" : hwEditId ? "Save Changes" : "Assign to Class"}
                   </button>
-                  <button onClick={() => setShowHWForm(false)} style={{ background:"#EDE8DF", color:"#6B7A99", border:"none", borderRadius:"10px", padding:"8px 14px", fontSize:"12px", cursor:"pointer" }}>Cancel</button>
+                  <button onClick={() => { setShowHWForm(false); resetHWForm(); }} style={{ background:"#EDE8DF", color:"#6B7A99", border:"none", borderRadius:"10px", padding:"8px 14px", fontSize:"12px", cursor:"pointer" }}>Cancel</button>
                 </div>
               </div>
             )}
@@ -750,6 +810,8 @@ export default function TeacherDashboardPage() {
               <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
                 {homework.map(hw => {
                   const isPast = hw.due_date ? new Date(hw.due_date) < new Date() : false;
+                  const th = getSubjectTheme(hw.subject);
+                  const isNew = hw.created_at && Date.now() - new Date(hw.created_at).getTime() < 2 * 864e5;
                   const sts: any[] = hwStatuses[hw.id] || [];
                   const doneCount = sts.filter(r => r.status === "done").length;
                   const doubts = sts.filter(r => r.parent_doubt);
@@ -759,23 +821,31 @@ export default function TeacherDashboardPage() {
                   ];
                   const open = hwExpanded === hw.id;
                   return (
-                    <div key={hw.id} style={{ background:"white", borderRadius:"14px", border:`1px solid ${isPast?"rgba(232,105,74,0.25)":"#EDE8DF"}`, padding:"14px 16px", display:"flex", flexDirection:"column", gap:"10px" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
-                        <div style={{ width:"42px", height:"42px", borderRadius:"12px", background:isPast?"rgba(232,105,74,0.1)":"rgba(99,102,241,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"20px", flexShrink:0 }}>📝</div>
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontWeight:700, fontSize:"14px", color:"#1A2F4A" }}><LinkifyText text={hw.title} /></div>
-                          <div style={{ fontSize:"11px", color:"#6B7A99" }}>
-                            {hw.subject && <span style={{ marginRight:"8px" }}>📖 {hw.subject}</span>}
-                            {hw.due_date
-                              ? <>Due: <span style={{ color:isPast?"#E8694A":"#178F78", fontWeight:600 }}>{new Date(hw.due_date).toLocaleDateString("en-IN")}</span></>
-                              : <span>No due date</span>}
-                            {isPast && <span style={{ marginLeft:"6px", background:"rgba(232,105,74,0.1)", color:"#E8694A", borderRadius:"20px", padding:"1px 7px", fontSize:"9px", fontWeight:700 }}>PAST DUE</span>}
+                    <div key={hw.id} style={{ background:"white", borderRadius:"16px", border:`1px solid ${isPast?"rgba(232,105,74,0.25)":"#EDE8DF"}`, borderLeft:`5px solid ${th.color}`, padding:"14px 16px", display:"flex", flexDirection:"column", gap:"10px", boxShadow:"0 2px 10px rgba(26,47,74,0.05)" }}>
+                      <div style={{ display:"flex", alignItems:"flex-start", gap:"12px" }}>
+                        <div style={{ width:"44px", height:"44px", borderRadius:"14px", background:th.bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"22px", flexShrink:0 }}>{th.emoji}</div>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:"6px", flexWrap:"wrap", marginBottom:"3px" }}>
+                            {hw.subject && <span style={{ fontSize:"10px", fontWeight:800, textTransform:"uppercase", letterSpacing:"0.04em", color:th.color, background:th.bg, borderRadius:"20px", padding:"3px 9px" }}>{hw.subject}</span>}
+                            {isNew && <span style={{ fontSize:"9px", fontWeight:800, color:"#fff", background:"#E8694A", borderRadius:"20px", padding:"3px 8px" }}>NEW</span>}
+                            {isPast && <span style={{ fontSize:"9px", fontWeight:800, color:"#fff", background:"#DC2626", borderRadius:"20px", padding:"3px 8px" }}>PAST DUE</span>}
                           </div>
-                          {hw.description && <div style={{ fontSize:"11px", color:"#6B7A99", marginTop:"2px" }}><LinkifyText text={hw.description} /></div>}
+                          <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:"16px", color:"#1A2F4A", lineHeight:1.25 }}><RichText text={hw.title} accent={th.color} /></div>
+                          {hw.description && <div style={{ fontSize:"12.5px", color:"#55617A", marginTop:"5px", lineHeight:1.5 }}><RichText text={hw.description} accent={th.color} /></div>}
+                          <div style={{ fontSize:"11px", color:"#6B7A99", fontWeight:700, marginTop:"7px" }}>
+                            {hw.due_date
+                              ? <>📅 Due <span style={{ color:isPast?"#E8694A":"#178F78" }}>{new Date(hw.due_date).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</span></>
+                              : <span>📌 No due date</span>}
+                          </div>
                         </div>
-                        <button onClick={() => deleteHW(hw.id)} style={{ background:"rgba(220,38,38,0.08)", border:"none", borderRadius:"8px", padding:"7px", cursor:"pointer", color:"#DC2626" }}>
-                          <Trash2 style={{ width:"14px", height:"14px" }} />
-                        </button>
+                        <div style={{ display:"flex", flexDirection:"column", gap:"6px", flexShrink:0 }}>
+                          <button onClick={() => startEditHW(hw)} title="Edit" style={{ background:th.bg, border:"none", borderRadius:"8px", padding:"7px", cursor:"pointer", color:th.color }}>
+                            <Pencil style={{ width:"14px", height:"14px" }} />
+                          </button>
+                          <button onClick={() => deleteHW(hw.id)} title="Delete" style={{ background:"rgba(220,38,38,0.08)", border:"none", borderRadius:"8px", padding:"7px", cursor:"pointer", color:"#DC2626" }}>
+                            <Trash2 style={{ width:"14px", height:"14px" }} />
+                          </button>
+                        </div>
                       </div>
 
                       {tFiles.length > 0 && (

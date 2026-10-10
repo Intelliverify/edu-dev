@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import LinkifyText from "@/components/LinkifyText";
+import RichText from "@/components/RichText";
+import { getSubjectTheme } from "@/lib/subjectTheme";
 import { uploadHomeworkFile } from "@/lib/uploadHomeworkFile";
 
 async function uploadFile(file: File): Promise<string | null> {
@@ -24,6 +25,9 @@ function Card({ hw, st, enquiryId, childName, onChanged }: { hw: any; st: any | 
   const doubtCam  = useRef<HTMLInputElement>(null);
 
   const done = st?.status === "done";
+  const th = getSubjectTheme(hw.subject);
+  const isNew = hw.created_at && Date.now() - new Date(hw.created_at).getTime() < 2 * 864e5;
+  const pastDue = !done && hw.due_date && new Date(hw.due_date) < new Date(new Date().toDateString());
   const teacherFiles: string[] = [
     ...(Array.isArray(hw.attachments) ? hw.attachments.map((a: any) => a?.url).filter(Boolean) : []),
     ...(hw.file_url ? [hw.file_url] : []),
@@ -59,20 +63,25 @@ function Card({ hw, st, enquiryId, childName, onChanged }: { hw: any; st: any | 
   const chip = { fontSize: 12, fontWeight: 700, color: "#178F78", background: "#EEF8F6", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
 
   return (
-    <div style={{ border: `1px solid ${done ? "rgba(23,143,120,0.3)" : "#EDE8DF"}`, borderRadius: 14, padding: 14, marginBottom: 10, background: done ? "rgba(23,143,120,0.04)" : "white" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: done ? "#6B7A99" : "#1A2F4A" }}><LinkifyText text={hw.title} /></div>
-          {hw.subject && <div style={{ fontSize: 10, color: "#6366F1", fontWeight: 700, marginTop: 2 }}>📖 {hw.subject}</div>}
-          {hw.description && <div style={{ fontSize: 11, color: "#6B7A99", marginTop: 4 }}><LinkifyText text={hw.description} /></div>}
-          <div style={{ fontSize: 11, color: done ? "#178F78" : "#6B7A99", fontWeight: 700, marginTop: 4 }}>
-            {done ? "✅ Completed" : (hw.due_date ? `Due: ${new Date(hw.due_date).toLocaleDateString("en-IN")}` : "No due date")}
+    <div style={{ border: `1px solid ${done ? "rgba(23,143,120,0.25)" : "#EDE8DF"}`, borderLeft: `5px solid ${th.color}`, borderRadius: 18, padding: 16, marginBottom: 12, background: done ? "rgba(23,143,120,0.04)" : "white", boxShadow: "0 2px 10px rgba(26,47,74,0.05)" }}>
+      <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 14, background: th.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{th.emoji}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
+            {hw.subject && <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: th.color, background: th.bg, borderRadius: 20, padding: "3px 9px" }}>{hw.subject}</span>}
+            {isNew && <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#E8694A", borderRadius: 20, padding: "3px 8px" }}>NEW</span>}
+            {pastDue && <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#DC2626", borderRadius: 20, padding: "3px 8px" }}>PAST DUE</span>}
+          </div>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, color: done ? "#6B7A99" : "#1A2F4A", lineHeight: 1.25 }}><RichText text={hw.title} accent={th.color} /></div>
+          {hw.description && <div style={{ fontSize: 12.5, color: "#55617A", marginTop: 5, lineHeight: 1.5 }}><RichText text={hw.description} accent={th.color} /></div>}
+          <div style={{ fontSize: 11, color: done ? "#178F78" : "#6B7A99", fontWeight: 700, marginTop: 7 }}>
+            {done ? "✅ Completed" : (hw.due_date ? `📅 Due ${new Date(hw.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : "📌 No due date")}
           </div>
           {teacherFiles.length > 0 && <div style={{ marginTop: 8 }}>{teacherFiles.map((u, i) => <FileLink key={i} url={u} label={`Attachment ${i + 1}`} />)}</div>}
         </div>
         <button onClick={() => save({ status: done ? "pending" : "done" })} disabled={busy}
-          style={{ flexShrink: 0, height: 32, background: done ? "rgba(23,143,120,0.1)" : "#178F78", color: done ? "#178F78" : "white", border: done ? "1px solid rgba(23,143,120,0.3)" : "none", borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-          {done ? "↩ Undo" : "✅ Mark Done"}
+          style={{ flexShrink: 0, alignSelf: "flex-start", background: done ? "rgba(23,143,120,0.1)" : "#178F78", color: done ? "#178F78" : "white", border: done ? "1px solid rgba(23,143,120,0.3)" : "none", borderRadius: 12, padding: "7px 13px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+          {done ? "↩ Undo" : "✅ Done"}
         </button>
       </div>
 

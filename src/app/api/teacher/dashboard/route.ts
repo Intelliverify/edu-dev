@@ -14,10 +14,6 @@ export async function GET(req: Request) {
   if (!sectionId) return NextResponse.json({ error: "sectionId required" }, { status: 400 });
 
   const today = new Date().toISOString().split("T")[0];
-  const monthStart = today.slice(0, 7) + "-01";
-  const [y, m] = today.slice(0,7).split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const monthEnd = `${today.slice(0,7)}-${String(lastDay).padStart(2,"0")}`;
 
   // Children in this section
   const { data: children } = await sb()
@@ -38,13 +34,17 @@ export async function GET(req: Request) {
     attendance = att || [];
   }
 
-  // Homework assigned for this section this month
+  // Homework assigned for this section (last 60 days).
+  // Filter by created_at — NOT due_date — so homework without a due date (optional
+  // field) still shows to the teacher, matching the parent dashboard behaviour.
+  const since = new Date();
+  since.setDate(since.getDate() - 60);
   const { data: homework } = await sb()
     .from("homework")
     .select("*")
     .eq("section_id", sectionId)
-    .gte("due_date", monthStart)
-    .order("due_date", { ascending: false });
+    .gte("created_at", since.toISOString())
+    .order("created_at", { ascending: false });
 
   // Photos uploaded for this section
   const { data: photos } = await sb()
