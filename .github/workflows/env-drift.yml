@@ -1,0 +1,75 @@
+name: Environment drift check
+
+# Runs in Intelliverify/edu-dev only. Reports commits that exist in staging
+# (edu-stg) or production (edu) but NOT in dev: typically a hotfix made
+# downstream that was never back-merged. Merge commits are ignored, because
+# promotion PRs create merge commits that dev never has.
+#
+# Schedule: Mondays 08:00 IST (02:30 UTC). GitHub may start it a few minutes late.
+# Requires repo secret PROMOTE_TOKEN with Contents READ on edu-stg and edu.
+
+on:
+  schedule:
+    - cron: "30 2 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    if: github.repository == 'Intelliverify/edu-dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compare dev with staging and production
+        id: cmp
+        env:
+          PROMOTE_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROMOTE_TOKEN:-}" ]; then
+            echo "::error::PROMOTE_TOKEN secret is not set"; exit 1
+          fi
+          REPORT=""
+          for pair in "edu-stg:staging" "edu:production"; do
+            REPO=${pair%%:*}; ENV=${pair##*:}
+            git fetch --quiet "https://x-access-token:${PROMOTE_TOKEN}@github.com/Intelliverify/${REPO}.git" \
+              main:refs/remotes/${REPO}/main
+            MISSING=$(git log --no-merges --format='- %h %s (%an, %cs)' HEAD..${REPO}/main)
+            PENDING=$(git rev-list --count --no-merges ${REPO}/main..HEAD)
+            echo "### ${ENV} (Intelliverify/${REPO})" >> "$GITHUB_STEP_SUMMARY"
+            echo "Commits in dev waiting to be promoted: ${PENDING}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$MISSING" ]; then
+              printf 'Commits in %s but NOT in dev:\n%s\n\n' "$ENV" "$MISSING" >> "$GITHUB_STEP_SUMMARY"
+              REPORT="${REPORT}### ${ENV} (Intelliverify/${REPO}) has commits missing from dev"$'\n'"${MISSING}"$'\n\n'
+            else
+              echo "No drift." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          if [ -n "$REPORT" ]; then
+            { echo "report<<EOF_REPORT"; printf '%s' "$REPORT"; echo "EOF_REPORT"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update drift issue
+        if: steps.cmp.outputs.report != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ steps.cmp.outputs.report }}
+        run: |
+          set -euo pipefail
+          TITLE="Environment drift: back-merge needed"
+          BODY=$(printf '%s\nBack-merge these commits into `edu-dev` main so the next promotion does not undo them.\n' "$REPORT")
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi
+          echo "::warning::Environment drift detected. See the issue."

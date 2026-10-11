@@ -1,8 +1,12 @@
 name: URID deploy events
 
-# When Vercel finishes a PRODUCTION deployment, GitHub emits a
-# deployment_status event. For each URID referenced in the deployed commit,
-# log a DEPLOY event in AdminPlatform and advance it to gate 6 (Live).
+# When Vercel finishes a deployment, GitHub emits a deployment_status event.
+# For each URID referenced in the deployed commit, log a DEPLOY event in
+# AdminPlatform, labelled with the environment this repo serves:
+#   Intelliverify/edu-dev → dev · Intelliverify/edu-stg → staging · Intelliverify/edu → production
+# Each repo's Vercel project calls its own deploys "Production", so the
+# environment comes from the repo, not from Vercel. Gate 6 (Live) is NOT set
+# here: gate changes are Founder-only in AdminPlatform (Phase 3A).
 #
 # Requires repo secret ADMINPLATFORM_AGENT_TOKEN (EDU-scoped agent token).
 
@@ -29,10 +33,16 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${TOKEN:-}" ]; then echo "No agent token — skipping."; exit 0; fi
-          # Only act on production deployments (Vercel labels previews differently).
+          # Only act on the Vercel project's main deployment (previews are skipped).
           case "$ENVIRON" in
             Production|production|Prod|prod) ;;
-            *) echo "Environment '$ENVIRON' is not production — skipping."; exit 0 ;;
+            *) echo "Environment '$ENVIRON' is a preview — skipping."; exit 0 ;;
+          esac
+          case "$REPO" in
+            Intelliverify/edu)     TARGET_ENV=production ;;
+            Intelliverify/edu-stg) TARGET_ENV=staging ;;
+            Intelliverify/edu-dev) TARGET_ENV=dev ;;
+            *) echo "Unknown repo $REPO — skipping."; exit 0 ;;
           esac
           # Fetch the deployed commit's message via the GitHub API.
           MSG=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
@@ -40,11 +50,10 @@ jobs:
           URIDS=$(printf '%s' "$MSG" | grep -oE 'URID_[A-Z]{2,6}_[0-9]{4}_[0-9]{4}(\.[0-9]+)?' | sort -u || true)
           if [ -z "$URIDS" ]; then echo "No URID references in deployed commit $SHA."; exit 0; fi
           for U in $URIDS; do
-            payload=$(jq -n --arg sha "$SHA" --arg repo "$REPO" --arg url "${DEPLOY_URL:-}" \
+            payload=$(jq -n --arg sha "$SHA" --arg repo "$REPO" --arg url "${DEPLOY_URL:-}" --arg env "$TARGET_ENV" \
               '{event_type:"DEPLOY",
-                description:("Deployed to production" + (if $url != "" then " — " + $url else "" end)),
-                set_gate:6, set_status:"LIVE",
-                metadata:{sha:$sha, repo:$repo, url:$url}}')
+                description:("Deployed to " + $env + (if $url != "" then " — " + $url else "" end)),
+                metadata:{sha:$sha, repo:$repo, url:$url, environment:$env}}')
             echo "→ DEPLOY $U ($SHA)"
             curl -s -m 20 -o /dev/null -w "   HTTP %{http_code}\n" -X POST \
               "$API/api/v1/urids/$U/events" \

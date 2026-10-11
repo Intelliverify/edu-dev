@@ -1,0 +1,82 @@
+name: Promote to next environment
+
+# One file, identical in all three EDU repos. Behaviour depends on which repo runs it:
+#   Intelliverify/edu-dev  → opens a PR into Intelliverify/edu-stg (staging)
+#   Intelliverify/edu-stg  → opens a PR into Intelliverify/edu     (production, Founder approves)
+#   Intelliverify/edu      → nothing (production is the last stop)
+#
+# Promotion is always a PR in the target repo, never a direct push to its main.
+# Merge promotion PRs with "Create a merge commit" (not squash/rebase) so the
+# original commit SHAs survive and env-drift.yml can compare repos accurately.
+#
+# Requires repo secret PROMOTE_TOKEN: fine-grained token / GitHub App token with
+# Contents + Pull requests write on the TARGET repo only.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.repository == 'Intelliverify/edu-dev' || github.repository == 'Intelliverify/edu-stg'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Open promotion PR
+        env:
+          PROMOTE_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+          SRC_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROMOTE_TOKEN:-}" ]; then
+            echo "::error::PROMOTE_TOKEN secret is not set in $SRC_REPO"; exit 1
+          fi
+          case "$SRC_REPO" in
+            Intelliverify/edu-dev) TARGET=Intelliverify/edu-stg; SRC_ENV=dev; DST_ENV=staging ;;
+            Intelliverify/edu-stg) TARGET=Intelliverify/edu;     SRC_ENV=staging; DST_ENV=production ;;
+          esac
+          SHA=$(git rev-parse HEAD); SHORT=${SHA:0:7}
+          BRANCH="promote/${SRC_ENV}-${SHORT}"
+          REMOTE="https://x-access-token:${PROMOTE_TOKEN}@github.com/${TARGET}.git"
+
+          git fetch --quiet "$REMOTE" main:refs/remotes/target/main
+          AHEAD=$(git rev-list --count --no-merges target/main..HEAD)
+          if [ "$AHEAD" = "0" ]; then
+            echo "Nothing to promote: $TARGET main already contains $SHORT."; exit 0
+          fi
+
+          git push --quiet "$REMOTE" "HEAD:refs/heads/${BRANCH}"
+
+          COMMITS=$(git log --no-merges --format='- %h %s' target/main..HEAD | head -100)
+          URIDS=$(git log --no-merges --format='%s%n%b' target/main..HEAD \
+                  | grep -oE 'URID_[A-Z]{2,6}_[0-9]{4}_[0-9]{4}(\.[0-9]+)?' | sort -u | sed 's/^/- /' || true)
+          [ -z "$URIDS" ] && URIDS="- (none referenced)"
+          BEHIND=$(git rev-list --count --no-merges HEAD..target/main)
+          DRIFT_NOTE=""
+          if [ "$BEHIND" != "0" ]; then
+            DRIFT_NOTE=$'\n\n> ⚠ '"$TARGET has $BEHIND commit(s) not in $SRC_REPO (hotfix?). Back-merge them into $SRC_REPO."
+          fi
+          BODY=$(printf '## Promotion %s → %s\n\nSource: `%s@%s` · %s commit(s)\n\n### URIDs\n%s\n\n### Commits\n%s%s\n\nMerge with **Create a merge commit**.' \
+                 "$SRC_ENV" "$DST_ENV" "$SRC_REPO" "$SHORT" "$AHEAD" "$URIDS" "$COMMITS" "$DRIFT_NOTE")
+
+          API="https://api.github.com/repos/${TARGET}/pulls"
+          AUTH=(-H "Authorization: Bearer ${PROMOTE_TOKEN}" -H "Accept: application/vnd.github+json")
+          OWNER=${TARGET%%/*}
+          EXISTING=$(curl -fsS "${AUTH[@]}" "${API}?head=${OWNER}:${BRANCH}&state=open" | jq -r '.[0].html_url // empty')
+          if [ -n "$EXISTING" ]; then echo "PR already open: $EXISTING"; exit 0; fi
+          URL=$(jq -n --arg t "Promote ${SRC_ENV} → ${DST_ENV} @ ${SHORT}" --arg h "$BRANCH" --arg b "$BODY" \
+                  '{title:$t, head:$h, base:"main", body:$b}' \
+                | curl -fsS "${AUTH[@]}" -X POST "$API" -d @- | jq -r '.html_url')
+          echo "Opened $URL"
+          echo "Promotion PR: $URL" >> "$GITHUB_STEP_SUMMARY"
